@@ -1,4 +1,3 @@
-
 import csv,hmac,html,io,textwrap
 from datetime import datetime
 import requests,streamlit as st
@@ -55,7 +54,8 @@ def home():
 def flourish():
     nav();B('<a class="back" href="?page=home">← العودة إلى الموقع</a>')
     B("""<section class="ch"><div class="badge">FLOURISH</div><h1>البرامج والتقييمات</h1><p class="copy">مساحة تجمع البرامج التدريبية المقدمة ضمن FLOURISH والتقييمات المرتبطة بها.</p></section>""")
-    B(f"""<section class="sec"><div class="fgrid"><div class="course"><div><h3>برنامج إعداد المدربين (TOT)</h3><div class="meta">{DATE_AR} · Training of Trainers</div><p class="small">برنامج تدريبي متكامل في تصميم وتقديم وإدارة التجربة التدريبية.</p></div><a class="btn primary" href="?page=tot">فتح الدورة ←</a></div><div class="reviewentry"><h3>التقييمات</h3><p class="small">آراء المتدربات المنشورة بعد موافقتهن واعتمادها.</p><a class="btn" href="?page=tot&tab=reviews">عرض التقييمات ←</a></div></div></section>""");foot()
+    B(f"""<section class="sec"><div class="course"><div><h3>برنامج إعداد المدربين (TOT)</h3><div class="meta">{DATE_AR} · Training of Trainers</div><p class="small">برنامج تدريبي متكامل في تصميم وتقديم وإدارة التجربة التدريبية.</p></div><a class="btn primary" href="?page=tot">فتح الدورة ←</a></div></section>""")
+    foot()
 def show_reviews():
     if not ready():st.info("سيظهر هذا القسم بعد ربط قاعدة البيانات.");return
     try: rows=pubs()
@@ -97,7 +97,11 @@ def tot():
     tabs=st.tabs(labels)
     for label,tab in zip(labels,tabs):
         with tab:
-            st.markdown(f"### {label}");show_reviews() if label=="آراء المتدربات" else form()
+            st.markdown(f"### {label}")
+            if label=="آراء المتدربات":
+                show_reviews()
+            else:
+                form()
     foot()
 def csvdata(rows):
     if not rows:return b""
@@ -134,4 +138,5 @@ def admin():
             else:st.caption("لم توافق المتدربة على النشر.")
     foot()
 page=st.query_params.get("page","home")
-{"flourish":flourish,"tot":tot,"admin":admin}.get(page,home)()
+selected_page = {"flourish":flourish,"tot":tot,"admin":admin}.get(page,home)
+selected_page()
