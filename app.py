@@ -1,4 +1,4 @@
-VERSION: FLOURISH_DASHBOARD_2026-09-01_FINAL
+
 import csv,hmac,html,io,textwrap
 from datetime import datetime
 import requests,streamlit as st
