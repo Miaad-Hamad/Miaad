@@ -71,26 +71,46 @@ def show_reviews():
 def form():
     B('<div class="notice">الاسم الكامل إلزامي</div>')
     o=["1","2","3","4","5"]
-    with st.form("f",clear_on_submit=True):
-        name=st.text_input("الاسم الكامل *",max_chars=100);st.caption("1 = يحتاج تحسينًا كبيرًا · 5 = ممتاز")
+
+    if "form_version" not in st.session_state:
+        st.session_state.form_version=0
+    v=st.session_state.form_version
+
+    with st.form(f"f_{v}",clear_on_submit=False):
+        name=st.text_input("الاسم الكامل *",max_chars=100,key=f"name_{v}")
+        st.caption("1 = يحتاج تحسينًا كبيرًا · 5 = ممتاز")
+
         labels=["جودة المحتوى التدريبي *","وضوح الشرح وتسلسل الأفكار *","القيمة التطبيقية للبرنامج *","جودة الأنشطة والتطبيقات *","أسلوب المدربة في التقديم *","إدارة التفاعل والمشاركة *","التعامل مع الأسئلة والإجابات *","تنظيم البرنامج وإدارة الوقت *","ملاءمة البيئة التدريبية *","جودة المواد التدريبية *","التقييم العام للبرنامج *","مدى ترشيحك للبرنامج لغيرك *"]
-        vals=[st.radio(x,o,horizontal=True,index=None,key=f"r{i}") for i,x in enumerate(labels)]
-        best=st.text_area("ما أكثر شيء كان ذا قيمة بالنسبة لك؟ *",max_chars=700);imp=st.text_area("ما الذي تقترحين تحسينه؟",max_chars=700);notes=st.text_area("ملاحظات إضافية",max_chars=700);cons=st.checkbox("أوافق على نشر اسمي وتقييمي ضمن آراء المتدربات.");sub=st.form_submit_button("إرسال التقييم",use_container_width=True)
+        vals=[st.radio(x,o,horizontal=True,index=None,key=f"r{i}_{v}") for i,x in enumerate(labels)]
+
+        best=st.text_area("ما أكثر شيء كان ذا قيمة بالنسبة لك؟ *",max_chars=700,key=f"best_{v}")
+        imp=st.text_area("ما الذي تقترحين تحسينه؟",max_chars=700,key=f"imp_{v}")
+        notes=st.text_area("ملاحظات إضافية",max_chars=700,key=f"notes_{v}")
+        cons=st.checkbox("أوافق على نشر اسمي وتقييمي ضمن آراء المتدربات.",key=f"cons_{v}")
+        sub=st.form_submit_button("إرسال التقييم",use_container_width=True)
+
     if sub:
-        if not name or len(name.strip())<2:st.error("الاسم الكامل إلزامي.")
-        elif any(v is None for v in vals):st.error("أكملي جميع عناصر التقييم.")
-        elif not best or len(best.strip())<3:st.error("أجيبي عن سؤال أكثر شيء كان ذا قيمة.")
-        elif not ready():st.error("قاعدة البيانات غير مربوطة بعد.")
+        if not name or len(name.strip())<2:
+            st.error("الاسم الكامل إلزامي.")
+        elif any(x is None for x in vals):
+            st.error("أكملي جميع عناصر التقييم.")
+        elif not best or len(best.strip())<3:
+            st.error("أجيبي عن سؤال أكثر شيء كان ذا قيمة.")
+        elif not ready():
+            st.error("قاعدة البيانات غير مربوطة بعد.")
         else:
             keys=["content_quality","clarity","practical_value","activities","trainer_delivery","interaction","answers","organization","environment","materials","overall","recommend"]
-            d={"name":name.strip(),"course":"TOT","course_date":DATE_DB,**{k:int(v) for k,v in zip(keys,vals)},"best_part":best.strip(),"improvement":imp.strip(),"additional_notes":notes.strip() if notes else None,"consent_public":bool(cons),"approved_public":False}
+            d={"name":name.strip(),"course":"TOT","course_date":DATE_DB,**{k:int(x) for k,x in zip(keys,vals)},"best_part":best.strip(),"improvement":imp.strip(),"additional_notes":notes.strip() if notes else None,"consent_public":bool(cons),"approved_public":False}
             try:
                 insert(d)
+                st.session_state.form_version += 1
                 st.success("تم استلام تقييمك بنجاح.")
+                st.rerun()
             except requests.RequestException as e:
                 st.error(f"تعذر حفظ التقييم: {e}")
                 if e.response is not None:
                     st.code(e.response.text)
+
 def tot():
     nav();B('<a class="back" href="?page=flourish">← العودة إلى FLOURISH</a>');B(f'<section class="ch"><div class="badge">FLOURISH · TOT</div><h1>برنامج إعداد المدربين (TOT)</h1><p class="copy">{DATE_AR} · صفحة التقييم وآراء المتدربات.</p></section>')
     reviews_first=st.query_params.get("tab","")=="reviews";labels=["آراء المتدربات","التقييم"] if reviews_first else ["التقييم","آراء المتدربات"]
