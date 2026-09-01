@@ -1,4 +1,3 @@
-
 import csv,hmac,html,io,textwrap
 from datetime import datetime
 import requests,streamlit as st
@@ -265,54 +264,87 @@ def csvdata(rows):
     fields=["id","name","course","course_date","content_quality","clarity","practical_value","activities","trainer_delivery","interaction","answers","organization","environment","materials","overall","recommend","best_part","improvement","additional_notes","consent_public","approved_public","submitted_at"];b=io.StringIO();w=csv.DictWriter(b,fieldnames=fields,extrasaction="ignore");w.writeheader();[w.writerow(r) for r in rows];return b.getvalue().encode("utf-8-sig")
 def admin():
     nav();B('<section class="ch"><div class="badge">PRIVATE</div><h1>لوحة الإدارة</h1><p class="copy">إدارة الدورات والتقييمات من مكان واحد.</p></section>')
-    if not ADMIN or not SERVICE:st.error("أضيفي كلمة مرور الإدارة وService Role Key في Streamlit Secrets.");return
-    if "ok" not in st.session_state:st.session_state.ok=False
+    if not ADMIN or not SERVICE:
+        st.error("أضيفي كلمة مرور الإدارة وService Role Key في Streamlit Secrets.")
+        return
+
+    if "ok" not in st.session_state:
+        st.session_state.ok=False
+
     if not st.session_state.ok:
         p=st.text_input("كلمة مرور الإدارة",type="password")
         if st.button("دخول",use_container_width=True):
-            if hmac.compare_digest(p,ADMIN):st.session_state.ok=True;st.rerun()
-            else:st.error("كلمة المرور غير صحيحة.")
+            if hmac.compare_digest(p,ADMIN):
+                st.session_state.ok=True
+                st.rerun()
+            else:
+                st.error("كلمة المرور غير صحيحة.")
         return
 
-    if st.button("تسجيل الخروج"):st.session_state.ok=False;st.rerun()
+    if st.button("تسجيل الخروج"):
+        st.session_state.ok=False
+        st.rerun()
+
+    if st.session_state.pop("course_saved_message",False):
+        st.success("تم حفظ الدورة بنجاح.")
 
     course_tab,feedback_tab=st.tabs(["إدارة الدورات","التقييمات"])
 
     with course_tab:
         st.markdown("### إضافة دورة جديدة")
-        with st.form("add_course_form",clear_on_submit=True):
-            name_ar=st.text_input("اسم الدورة بالعربي *")
-            name_en=st.text_input("اسم الدورة بالإنجليزي")
-            code=st.text_input("رمز الدورة",placeholder="مثال: TOT")
-            slug=st.text_input("الرابط المختصر *",placeholder="مثال: public-speaking-2026")
-            course_date=st.date_input("تاريخ الدورة")
-            description=st.text_area("وصف مختصر")
-            active=st.checkbox("إظهار الدورة في الموقع",value=True)
+
+        if "course_form_version" not in st.session_state:
+            st.session_state.course_form_version=0
+        fv=st.session_state.course_form_version
+
+        with st.form(f"add_course_form_{fv}",clear_on_submit=False):
+            name_ar=st.text_input("اسم الدورة بالعربي *",key=f"add_name_ar_{fv}")
+            name_en=st.text_input("اسم الدورة بالإنجليزي",key=f"add_name_en_{fv}")
+            code=st.text_input("رمز الدورة *",placeholder="مثال: TOT",key=f"add_code_{fv}")
+            course_date=st.date_input("تاريخ الدورة *",key=f"add_date_{fv}")
+            description=st.text_area("نبذة مختصرة",key=f"add_desc_{fv}")
+            active=st.checkbox("إظهار الدورة في الموقع",value=True,key=f"add_active_{fv}")
             save_course=st.form_submit_button("إضافة الدورة",use_container_width=True)
 
         if save_course:
-            clean_slug=slug.strip().lower().replace(" ","-")
-            if not name_ar.strip():
+            clean_name=name_ar.strip()
+            clean_code=code.strip()
+            if not clean_name:
                 st.error("اسم الدورة بالعربي إلزامي.")
-            elif not clean_slug:
-                st.error("الرابط المختصر إلزامي.")
+            elif not clean_code:
+                st.error("رمز الدورة إلزامي لإنشاء رابط الدورة تلقائيًا.")
             else:
+                slug_code="".join(ch.lower() if ch.isalnum() else "-" for ch in clean_code)
+                slug_code="-".join(part for part in slug_code.split("-") if part)
+                clean_slug=f"{slug_code}-{course_date.isoformat()}"
                 payload={
                     "slug":clean_slug,
-                    "name_ar":name_ar.strip(),
+                    "name_ar":clean_name,
                     "name_en":name_en.strip() or None,
-                    "course_code":code.strip() or None,
+                    "course_code":clean_code,
                     "course_date":course_date.isoformat(),
                     "description":description.strip() or None,
                     "is_active":bool(active)
                 }
                 try:
                     add_course(payload)
-                    st.success("تمت إضافة الدورة بنجاح.")
+                    st.session_state.course_form_version += 1
+                    st.session_state.course_saved_message=True
                     st.rerun()
                 except requests.RequestException as e:
-                    st.error(f"تعذر إضافة الدورة: {e}")
-                    if e.response is not None:st.code(e.response.text)
+                    st.error("تعذر إضافة الدورة. بقيت جميع البيانات كما هي لتتمكني من تعديل الخطأ.")
+                    if e.response is not None:
+                        try:
+                            err=e.response.json()
+                            msg=str(err.get("message") or "")
+                            if "duplicate key" in msg.lower() or "unique" in msg.lower():
+                                st.info("يوجد بالفعل رابط دورة بنفس رمز الدورة والتاريخ. غيّري الرمز أو التاريخ.")
+                            else:
+                                st.code(e.response.text)
+                        except:
+                            st.code(e.response.text)
+
+        st.caption("الرابط المختصر يُنشأ تلقائيًا من رمز الدورة + تاريخها، ولا تحتاجين إلى كتابته.")
 
         st.markdown("### الدورات الحالية")
         try:
@@ -323,37 +355,128 @@ def admin():
 
         if not course_rows:
             st.info("لا توجد دورات.")
+
         for c in course_rows:
             cid=int(c["id"])
             cname=str(c.get("name_ar") or "")
             cactive=bool(c.get("is_active"))
+            cslug=str(c.get("slug") or "")
+
+            try:
+                current_date=datetime.fromisoformat(str(c.get("course_date"))).date()
+            except:
+                current_date=datetime.now().date()
+
             with st.container(border=True):
                 st.markdown(f"#### {cname}")
-                st.caption(f"{c.get('course_date','')} · {c.get('course_code') or ''} · {c.get('slug','')}")
-                if c.get("description"):st.write(c.get("description"))
+                meta_parts=[str(c.get("course_date") or "")]
+                if c.get("course_code"):
+                    meta_parts.append(str(c.get("course_code")))
+                st.caption(" · ".join(x for x in meta_parts if x))
+                if c.get("description"):
+                    st.write(c.get("description"))
+
+                with st.expander("تحرير الدورة"):
+                    with st.form(f"edit_course_{cid}",clear_on_submit=False):
+                        edit_name_ar=st.text_input(
+                            "اسم الدورة بالعربي *",
+                            value=str(c.get("name_ar") or ""),
+                            key=f"edit_name_ar_{cid}"
+                        )
+                        edit_name_en=st.text_input(
+                            "اسم الدورة بالإنجليزي",
+                            value=str(c.get("name_en") or ""),
+                            key=f"edit_name_en_{cid}"
+                        )
+                        edit_code=st.text_input(
+                            "رمز الدورة *",
+                            value=str(c.get("course_code") or ""),
+                            key=f"edit_code_{cid}"
+                        )
+                        edit_date=st.date_input(
+                            "تاريخ الدورة *",
+                            value=current_date,
+                            key=f"edit_date_{cid}"
+                        )
+                        edit_desc=st.text_area(
+                            "نبذة مختصرة",
+                            value=str(c.get("description") or ""),
+                            key=f"edit_desc_{cid}"
+                        )
+                        edit_active=st.checkbox(
+                            "إظهار الدورة في الموقع",
+                            value=cactive,
+                            key=f"edit_active_{cid}"
+                        )
+                        save_edit=st.form_submit_button("حفظ التعديلات",use_container_width=True)
+
+                    if save_edit:
+                        if not edit_name_ar.strip():
+                            st.error("اسم الدورة بالعربي إلزامي.")
+                        elif not edit_code.strip():
+                            st.error("رمز الدورة إلزامي.")
+                        else:
+                            edit_payload={
+                                "name_ar":edit_name_ar.strip(),
+                                "name_en":edit_name_en.strip() or None,
+                                "course_code":edit_code.strip(),
+                                "course_date":edit_date.isoformat(),
+                                "description":edit_desc.strip() or None,
+                                "is_active":bool(edit_active)
+                            }
+                            try:
+                                update_course(cid,edit_payload)
+                                st.session_state.course_saved_message=True
+                                st.rerun()
+                            except requests.RequestException as e:
+                                st.error("تعذر حفظ التعديلات. بقيت جميع البيانات في الخانات.")
+                                if e.response is not None:
+                                    st.code(e.response.text)
+
+                    st.caption(f"الرابط الحالي: {cslug}")
+                    st.caption("يبقى رابط الدورة ثابتًا عند التحرير حتى لا تتعطل الروابط السابقة.")
 
                 col1,col2=st.columns(2)
-                if col1.button("إخفاء من الموقع" if cactive else "إظهار في الموقع",key=f"toggle_course_{cid}",use_container_width=True):
+
+                if col1.button(
+                    "إخفاء من الموقع" if cactive else "إظهار في الموقع",
+                    key=f"toggle_course_{cid}",
+                    use_container_width=True
+                ):
                     try:
                         update_course(cid,{"is_active":not cactive})
                         st.rerun()
                     except requests.RequestException as e:
-                        st.error(f"تعذر تحديث الدورة: {e}")
+                        st.error(f"تعذر تحديث حالة الدورة: {e}")
 
-                if col2.button("حذف الدورة",key=f"delete_course_{cid}",use_container_width=True):
+                if col2.button(
+                    "حذف الدورة",
+                    key=f"delete_course_{cid}",
+                    use_container_width=True
+                ):
                     st.session_state[f"confirm_delete_course_{cid}"]=True
 
                 if st.session_state.get(f"confirm_delete_course_{cid}",False):
                     st.warning("سيتم حذف الدورة من قائمة الدورات نهائيًا. التقييمات السابقة لن تُحذف.")
                     yes,no=st.columns(2)
-                    if yes.button("تأكيد الحذف",key=f"yes_delete_course_{cid}",use_container_width=True):
+
+                    if yes.button(
+                        "تأكيد الحذف",
+                        key=f"yes_delete_course_{cid}",
+                        use_container_width=True
+                    ):
                         try:
                             delete_course(cid)
                             st.session_state.pop(f"confirm_delete_course_{cid}",None)
                             st.rerun()
                         except requests.RequestException as e:
                             st.error(f"تعذر حذف الدورة: {e}")
-                    if no.button("إلغاء",key=f"no_delete_course_{cid}",use_container_width=True):
+
+                    if no.button(
+                        "إلغاء",
+                        key=f"no_delete_course_{cid}",
+                        use_container_width=True
+                    ):
                         st.session_state.pop(f"confirm_delete_course_{cid}",None)
                         st.rerun()
 
@@ -379,16 +502,27 @@ def admin():
             st.download_button("تنزيل CSV",csvdata(rows),"feedback.csv","text/csv",use_container_width=True)
 
             for r in rows:
-                rid=int(r["id"]);cons=bool(r.get("consent_public"));ap=bool(r.get("approved_public"))
+                rid=int(r["id"])
+                cons=bool(r.get("consent_public"))
+                ap=bool(r.get("approved_public"))
+
                 with st.container(border=True):
                     st.markdown(f"### {r.get('name','')}")
                     st.caption(f"{r.get('course','')} · {r.get('course_date','')}")
                     st.write(r.get("best_part") or "")
                     st.caption(f"التقييم العام: {r.get('overall','-')}/5")
+
                     if cons:
-                        if st.button("إلغاء النشر" if ap else "اعتماد للنشر",key=f"p{rid}",use_container_width=True):
-                            try:approve(rid,not ap);st.rerun()
-                            except requests.RequestException:st.error("تعذر تحديث حالة النشر.")
+                        if st.button(
+                            "إلغاء النشر" if ap else "اعتماد للنشر",
+                            key=f"p{rid}",
+                            use_container_width=True
+                        ):
+                            try:
+                                approve(rid,not ap)
+                                st.rerun()
+                            except requests.RequestException:
+                                st.error("تعذر تحديث حالة النشر.")
                     else:
                         st.caption("لم توافق المتدربة على النشر.")
     foot()
