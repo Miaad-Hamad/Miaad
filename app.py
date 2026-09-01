@@ -39,36 +39,6 @@ def pubs():
     r=requests.get(f"{URL}/rest/v1/tot_feedback",headers=H(ANON),params={"select":"id,name,overall,best_part,submitted_at","consent_public":"eq.true","approved_public":"eq.true","order":"submitted_at.desc"},timeout=15);r.raise_for_status();return r.json()
 def alls():
     r=requests.get(f"{URL}/rest/v1/tot_feedback",headers=H(SERVICE),params={"select":"*","order":"submitted_at.desc"},timeout=15);r.raise_for_status();return r.json()
-def courses():
-    if not ready():return []
-    r=requests.get(
-        f"{URL}/rest/v1/courses",
-        headers=H(ANON),
-        params={
-            "select":"id,slug,name_ar,name_en,course_code,course_date,description,is_active",
-            "is_active":"eq.true",
-            "order":"course_date.desc"
-        },
-        timeout=15
-    )
-    r.raise_for_status()
-    return r.json()
-
-def get_course(slug):
-    if not ready():return None
-    r=requests.get(
-        f"{URL}/rest/v1/courses",
-        headers=H(ANON),
-        params={
-            "select":"id,slug,name_ar,name_en,course_code,course_date,description,is_active",
-            "slug":f"eq.{slug}",
-            "limit":"1"
-        },
-        timeout=15
-    )
-    r.raise_for_status()
-    rows=r.json()
-    return rows[0] if rows else None
 def approve(i,v):
     r=requests.patch(f"{URL}/rest/v1/tot_feedback",headers=H(SERVICE,"return=minimal"),params={"id":f"eq.{i}"},json={"approved_public":bool(v)},timeout=15);r.raise_for_status()
 def nav():
@@ -84,32 +54,8 @@ def home():
 def flourish():
     nav();B('<a class="back" href="?page=home">← العودة إلى الموقع</a>')
     B("""<section class="ch"><div class="badge">FLOURISH</div><h1>البرامج والتقييمات</h1><p class="copy">مساحة تجمع البرامج التدريبية المقدمة ضمن FLOURISH والتقييمات المرتبطة بها.</p></section>""")
-    try:
-        rows=courses()
-    except requests.RequestException:
-        st.warning("تعذر تحميل البرامج الآن.")
-        rows=[]
-
-    if not rows:
-        st.info("لا توجد برامج متاحة حاليًا.")
-    else:
-        cards=[]
-        for c in rows:
-            slug=html.escape(str(c.get("slug") or ""))
-            name=html.escape(str(c.get("name_ar") or "برنامج تدريبي"))
-            name_en=html.escape(str(c.get("name_en") or ""))
-            desc=html.escape(str(c.get("description") or ""))
-            try:
-                d=datetime.fromisoformat(str(c.get("course_date"))).strftime("%d.%m.%Y")
-            except:
-                d=html.escape(str(c.get("course_date") or ""))
-            meta=d + (f" · {name_en}" if name_en else "")
-            cards.append(
-                f'<div class="course"><div><h3>{name}</h3><div class="meta">{meta}</div><p class="small">{desc}</p></div><a class="btn primary" href="?page=course&slug={slug}">فتح الدورة ←</a></div>'
-            )
-        B(f'<section class="sec"><div class="fgrid" style="grid-template-columns:1fr">{"".join(cards)}</div></section>')
+    B(f"""<section class="sec"><div class="course"><div><h3>برنامج إعداد المدربين (TOT)</h3><div class="meta">{DATE_AR} · Training of Trainers</div><p class="small">برنامج تدريبي متكامل في تصميم وتقديم وإدارة التجربة التدريبية.</p></div><a class="btn primary" href="?page=tot">فتح الدورة ←</a></div></section>""")
     foot()
-
 def show_reviews():
     if not ready():st.info("سيظهر هذا القسم بعد ربط قاعدة البيانات.");return
     try: rows=pubs()
@@ -125,88 +71,26 @@ def show_reviews():
 def form():
     B('<div class="notice">الاسم الكامل إلزامي</div>')
     o=["1","2","3","4","5"]
-
-    if "form_version" not in st.session_state:
-        st.session_state.form_version=0
-    v=st.session_state.form_version
-
-    with st.form(f"f_{v}",clear_on_submit=False):
-        name=st.text_input("الاسم الكامل *",max_chars=100,key=f"name_{v}")
-        st.caption("1 = يحتاج تحسينًا كبيرًا · 5 = ممتاز")
-
+    with st.form("f",clear_on_submit=True):
+        name=st.text_input("الاسم الكامل *",max_chars=100);st.caption("1 = يحتاج تحسينًا كبيرًا · 5 = ممتاز")
         labels=["جودة المحتوى التدريبي *","وضوح الشرح وتسلسل الأفكار *","القيمة التطبيقية للبرنامج *","جودة الأنشطة والتطبيقات *","أسلوب المدربة في التقديم *","إدارة التفاعل والمشاركة *","التعامل مع الأسئلة والإجابات *","تنظيم البرنامج وإدارة الوقت *","ملاءمة البيئة التدريبية *","جودة المواد التدريبية *","التقييم العام للبرنامج *","مدى ترشيحك للبرنامج لغيرك *"]
-        vals=[st.radio(x,o,horizontal=True,index=None,key=f"r{i}_{v}") for i,x in enumerate(labels)]
-
-        best=st.text_area("ما أكثر شيء كان ذا قيمة بالنسبة لك؟ *",max_chars=700,key=f"best_{v}")
-        imp=st.text_area("ما الذي تقترحين تحسينه؟",max_chars=700,key=f"imp_{v}")
-        notes=st.text_area("ملاحظات إضافية",max_chars=700,key=f"notes_{v}")
-        cons=st.checkbox("أوافق على نشر اسمي وتقييمي ضمن آراء المتدربات.",key=f"cons_{v}")
-        sub=st.form_submit_button("إرسال التقييم",use_container_width=True)
-
+        vals=[st.radio(x,o,horizontal=True,index=None,key=f"r{i}") for i,x in enumerate(labels)]
+        best=st.text_area("ما أكثر شيء كان ذا قيمة بالنسبة لك؟ *",max_chars=700);imp=st.text_area("ما الذي تقترحين تحسينه؟",max_chars=700);notes=st.text_area("ملاحظات إضافية",max_chars=700);cons=st.checkbox("أوافق على نشر اسمي وتقييمي ضمن آراء المتدربات.");sub=st.form_submit_button("إرسال التقييم",use_container_width=True)
     if sub:
-        if not name or len(name.strip())<2:
-            st.error("الاسم الكامل إلزامي.")
-        elif any(x is None for x in vals):
-            st.error("أكملي جميع عناصر التقييم.")
-        elif not best or len(best.strip())<3:
-            st.error("أجيبي عن سؤال أكثر شيء كان ذا قيمة.")
-        elif not ready():
-            st.error("قاعدة البيانات غير مربوطة بعد.")
+        if not name or len(name.strip())<2:st.error("الاسم الكامل إلزامي.")
+        elif any(v is None for v in vals):st.error("أكملي جميع عناصر التقييم.")
+        elif not best or len(best.strip())<3:st.error("أجيبي عن سؤال أكثر شيء كان ذا قيمة.")
+        elif not ready():st.error("قاعدة البيانات غير مربوطة بعد.")
         else:
             keys=["content_quality","clarity","practical_value","activities","trainer_delivery","interaction","answers","organization","environment","materials","overall","recommend"]
-            d={"name":name.strip(),"course":"TOT","course_date":DATE_DB,**{k:int(x) for k,x in zip(keys,vals)},"best_part":best.strip(),"improvement":imp.strip(),"additional_notes":notes.strip() if notes else None,"consent_public":bool(cons),"approved_public":False}
+            d={"name":name.strip(),"course":"TOT","course_date":DATE_DB,**{k:int(v) for k,v in zip(keys,vals)},"best_part":best.strip(),"improvement":imp.strip(),"additional_notes":notes.strip() if notes else None,"consent_public":bool(cons),"approved_public":False}
             try:
                 insert(d)
-                st.session_state.form_version += 1
                 st.success("تم استلام تقييمك بنجاح.")
-                st.rerun()
             except requests.RequestException as e:
                 st.error(f"تعذر حفظ التقييم: {e}")
                 if e.response is not None:
                     st.code(e.response.text)
-
-def course_page():
-    slug=st.query_params.get("slug","")
-    try:
-        c=get_course(slug) if slug else None
-    except requests.RequestException:
-        c=None
-
-    if not c:
-        nav()
-        B('<a class="back" href="?page=flourish">← العودة إلى FLOURISH</a>')
-        st.error("تعذر العثور على الدورة.")
-        foot()
-        return
-
-    name=str(c.get("name_ar") or "برنامج تدريبي")
-    name_en=str(c.get("name_en") or "")
-    course_code=str(c.get("course_code") or "")
-    course_date=str(c.get("course_date") or "")
-
-    try:
-        date_ar=datetime.fromisoformat(course_date).strftime("%d.%m.%Y")
-    except:
-        date_ar=course_date
-
-    nav()
-    B('<a class="back" href="?page=flourish">← العودة إلى FLOURISH</a>')
-    badge="FLOURISH" + (f" · {html.escape(course_code)}" if course_code else "")
-    subtitle=html.escape(date_ar) + (f" · {html.escape(name_en)}" if name_en else "")
-    B(f'<section class="ch"><div class="badge">{badge}</div><h1>{html.escape(name)}</h1><p class="copy">{subtitle}</p></section>')
-
-    reviews_first=st.query_params.get("tab","")=="reviews"
-    labels=["آراء المتدربات","التقييم"] if reviews_first else ["التقييم","آراء المتدربات"]
-    tabs=st.tabs(labels)
-    for label,tab in zip(labels,tabs):
-        with tab:
-            st.markdown(f"### {label}")
-            if label=="آراء المتدربات":
-                show_reviews()
-            else:
-                form()
-    foot()
-
 def tot():
     nav();B('<a class="back" href="?page=flourish">← العودة إلى FLOURISH</a>');B(f'<section class="ch"><div class="badge">FLOURISH · TOT</div><h1>برنامج إعداد المدربين (TOT)</h1><p class="copy">{DATE_AR} · صفحة التقييم وآراء المتدربات.</p></section>')
     reviews_first=st.query_params.get("tab","")=="reviews";labels=["آراء المتدربات","التقييم"] if reviews_first else ["التقييم","آراء المتدربات"]
@@ -254,5 +138,5 @@ def admin():
             else:st.caption("لم توافق المتدربة على النشر.")
     foot()
 page=st.query_params.get("page","home")
-selected_page = {"flourish":flourish,"course":course_page,"tot":tot,"admin":admin}.get(page,home)
+selected_page = {"flourish":flourish,"tot":tot,"admin":admin}.get(page,home)
 selected_page()
