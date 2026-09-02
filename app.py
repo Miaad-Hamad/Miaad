@@ -35,9 +35,22 @@ def H(k,prefer=None):
     return h
 def insert(d):
     r=requests.post(f"{URL}/rest/v1/tot_feedback",headers=H(ANON,"return=minimal"),json=d,timeout=15);r.raise_for_status()
-def pubs():
+def pubs(course_slug):
     if not ready():return []
-    r=requests.get(f"{URL}/rest/v1/tot_feedback",headers=H(ANON),params={"select":"id,name,overall,best_part,submitted_at","consent_public":"eq.true","approved_public":"eq.true","order":"submitted_at.desc"},timeout=15);r.raise_for_status();return r.json()
+    r=requests.get(
+        f"{URL}/rest/v1/tot_feedback",
+        headers=H(ANON),
+        params={
+            "select":"id,name,overall,best_part,submitted_at",
+            "course_slug":f"eq.{course_slug}",
+            "consent_public":"eq.true",
+            "approved_public":"eq.true",
+            "order":"submitted_at.desc"
+        },
+        timeout=15
+    )
+    r.raise_for_status()
+    return r.json()
 def alls():
     r=requests.get(f"{URL}/rest/v1/tot_feedback",headers=H(SERVICE),params={"select":"*","order":"submitted_at.desc"},timeout=15);r.raise_for_status();return r.json()
 def courses():
@@ -110,6 +123,20 @@ def delete_course(i):
 
 def approve(i,v):
     r=requests.patch(f"{URL}/rest/v1/tot_feedback",headers=H(SERVICE,"return=minimal"),params={"id":f"eq.{i}"},json={"approved_public":bool(v)},timeout=15);r.raise_for_status()
+def reassign_feedback(i,course_row):
+    payload={
+        "course_slug":str(course_row.get("slug") or ""),
+        "course":str(course_row.get("name_ar") or course_row.get("course_code") or "برنامج تدريبي"),
+        "course_date":str(course_row.get("course_date") or "")
+    }
+    r=requests.patch(
+        f"{URL}/rest/v1/tot_feedback",
+        headers=H(SERVICE,"return=minimal"),
+        params={"id":f"eq.{i}"},
+        json=payload,
+        timeout=15
+    )
+    r.raise_for_status()
 def nav():
     B("""<div class="nav"><div class="brand">MIAAD ALANAZI</div><div class="links"><a href="?page=home">الرئيسية</a><a href="#about">عني</a><a href="?page=flourish">FLOURISH</a><a href="#contact">تواصل معي</a></div></div>""")
 def foot():B('<div class="foot">MIAAD ALANAZI · FLOURISH </div>')
@@ -155,11 +182,11 @@ def flourish():
         B(f'<section class="sec"><div class="fgrid" style="grid-template-columns:1fr">{"".join(cards)}</div></section>')
     foot()
 
-def show_reviews():
+def show_reviews(course_slug):
     if not ready():st.info("سيظهر هذا القسم بعد ربط قاعدة البيانات.");return
-    try: rows=pubs()
+    try: rows=pubs(course_slug)
     except requests.RequestException:st.warning("تعذر تحميل التقييمات الآن.");return
-    if not rows:st.info("لا توجد تقييمات منشورة حتى الآن.");return
+    if not rows:st.info("لا توجد تقييمات منشورة لهذه الدورة حتى الآن.");return
     cards=[]
     for r in rows:
         n=html.escape(str(r.get("name") or "متدربة"));t=html.escape(str(r.get("best_part") or ""));s=max(1,min(5,int(r.get("overall") or 1)));stars="★"*s+"☆"*(5-s)
@@ -167,7 +194,8 @@ def show_reviews():
         except:d=""
         cards.append(f'<article class="review"><div class="rtop"><strong>{n}</strong><span class="stars">{stars}</span></div><p>{t}</p><div class="date">{d}</div></article>')
     B(f'<div class="rgrid">{"".join(cards)}</div>')
-def form():
+
+def form(course_data):
     B('<div class="notice">الاسم الكامل إلزامي</div>')
     o=["1","2","3","4","5"]
 
@@ -199,11 +227,22 @@ def form():
             st.error("قاعدة البيانات غير مربوطة بعد.")
         else:
             keys=["content_quality","clarity","practical_value","activities","trainer_delivery","interaction","answers","organization","environment","materials","overall","recommend"]
-            d={"name":name.strip(),"course":"TOT","course_date":DATE_DB,**{k:int(x) for k,x in zip(keys,vals)},"best_part":best.strip(),"improvement":imp.strip(),"additional_notes":notes.strip() if notes else None,"consent_public":bool(cons),"approved_public":False}
+            d={
+                "name":name.strip(),
+                "course":str(course_data.get("name_ar") or course_data.get("course_code") or "برنامج تدريبي"),
+                "course_slug":str(course_data.get("slug") or ""),
+                "course_date":str(course_data.get("course_date") or ""),
+                **{k:int(x) for k,x in zip(keys,vals)},
+                "best_part":best.strip(),
+                "improvement":imp.strip() if imp else None,
+                "additional_notes":notes.strip() if notes else None,
+                "consent_public":bool(cons),
+                "approved_public":False
+            }
             try:
                 insert(d)
                 st.session_state.form_version += 1
-                st.success("تم استلام تقييمك بنجاح.")
+                st.session_state.feedback_saved_message=True
                 st.rerun()
             except requests.RequestException as e:
                 st.error(f"تعذر حفظ التقييم: {e}")
@@ -241,6 +280,8 @@ def course_page():
     desc=html.escape(str(c.get("description") or ""))
     description_html=f'<p class="copy">{desc}</p>' if desc else ""
     B(f'<section class="ch"><div class="badge">{badge}</div><h1>{html.escape(name)}</h1><p class="copy">{subtitle}</p>{description_html}</section>')
+    if st.session_state.pop("feedback_saved_message",False):
+        st.success("تم استلام تقييمك بنجاح.")
 
     reviews_first=st.query_params.get("tab","")=="reviews"
     labels=["آراء المتدربات","التقييم"] if reviews_first else ["التقييم","آراء المتدربات"]
@@ -249,26 +290,18 @@ def course_page():
         with tab:
             st.markdown(f"### {label}")
             if label=="آراء المتدربات":
-                show_reviews()
+                show_reviews(str(c.get("slug") or ""))
             else:
-                form()
+                form(c)
     foot()
 
 def tot():
-    nav();B('<a class="back" href="?page=flourish">← العودة إلى FLOURISH</a>');B(f'<section class="ch"><div class="badge">FLOURISH · TOT</div><h1>برنامج إعداد المدربين (TOT)</h1><p class="copy">{DATE_AR} · صفحة التقييم وآراء المتدربات.</p></section>')
-    reviews_first=st.query_params.get("tab","")=="reviews";labels=["آراء المتدربات","التقييم"] if reviews_first else ["التقييم","آراء المتدربات"]
-    tabs=st.tabs(labels)
-    for label,tab in zip(labels,tabs):
-        with tab:
-            st.markdown(f"### {label}")
-            if label=="آراء المتدربات":
-                show_reviews()
-            else:
-                form()
-    foot()
+    st.query_params["page"]="course"
+    st.query_params["slug"]="tot-2026-08-16"
+    st.rerun()
 def csvdata(rows):
     if not rows:return b""
-    fields=["id","name","course","course_date","content_quality","clarity","practical_value","activities","trainer_delivery","interaction","answers","organization","environment","materials","overall","recommend","best_part","improvement","additional_notes","consent_public","approved_public","submitted_at"];b=io.StringIO();w=csv.DictWriter(b,fieldnames=fields,extrasaction="ignore");w.writeheader();[w.writerow(r) for r in rows];return b.getvalue().encode("utf-8-sig")
+    fields=["id","name","course","course_slug","course_date","content_quality","clarity","practical_value","activities","trainer_delivery","interaction","answers","organization","environment","materials","overall","recommend","best_part","improvement","additional_notes","consent_public","approved_public","submitted_at"];b=io.StringIO();w=csv.DictWriter(b,fieldnames=fields,extrasaction="ignore");w.writeheader();[w.writerow(r) for r in rows];return b.getvalue().encode("utf-8-sig")
 def admin():
     nav();B('<section class="ch"><div class="badge">PRIVATE</div><h1>لوحة الإدارة</h1><p class="copy">إدارة الدورات والتقييمات من مكان واحد.</p></section>')
     if not ADMIN or not SERVICE:
@@ -490,11 +523,13 @@ def admin():
     with feedback_tab:
         try:
             rows=alls()
+            course_rows_for_feedback=admin_courses()
         except requests.RequestException as e:
             st.error(f"تعذر تحميل التقييمات: {e}")
             if e.response is not None:
                 st.code(e.response.text)
             rows=[]
+            course_rows_for_feedback=[]
 
         if not rows:
             st.info("لا توجد تقييمات.")
@@ -508,16 +543,48 @@ def admin():
             c.metric("المتوسط",f"{avg:.1f}/5")
             st.download_button("تنزيل CSV",csvdata(rows),"feedback.csv","text/csv",use_container_width=True)
 
+            course_by_slug={str(x.get("slug") or ""):x for x in course_rows_for_feedback}
+            course_labels={
+                str(x.get("slug") or ""):f"{x.get('name_ar') or 'برنامج تدريبي'} · {x.get('course_date') or ''}"
+                for x in course_rows_for_feedback
+            }
+
             for r in rows:
                 rid=int(r["id"])
                 cons=bool(r.get("consent_public"))
                 ap=bool(r.get("approved_public"))
+                current_slug=str(r.get("course_slug") or "")
 
                 with st.container(border=True):
                     st.markdown(f"### {r.get('name','')}")
-                    st.caption(f"{r.get('course','')} · {r.get('course_date','')}")
+                    if current_slug and current_slug in course_by_slug:
+                        cc=course_by_slug[current_slug]
+                        st.caption(f"{cc.get('name_ar','')} · {cc.get('course_date','')}")
+                    else:
+                        st.caption(f"{r.get('course','')} · {r.get('course_date','')}")
+                        st.warning("هذا التقييم غير مربوط بدورة بعد.")
+
                     st.write(r.get("best_part") or "")
                     st.caption(f"التقييم العام: {r.get('overall','-')}/5")
+
+                    if course_rows_for_feedback:
+                        options=[""]+[str(x.get("slug") or "") for x in course_rows_for_feedback]
+                        default_index=options.index(current_slug) if current_slug in options else 0
+                        chosen=st.selectbox(
+                            "الدورة المرتبطة بهذا التقييم",
+                            options,
+                            index=default_index,
+                            format_func=lambda s: "— اختاري الدورة —" if not s else course_labels.get(s,s),
+                            key=f"course_for_feedback_{rid}"
+                        )
+                        if chosen and chosen != current_slug:
+                            if st.button("حفظ ربط التقييم بالدورة",key=f"save_feedback_course_{rid}",use_container_width=True):
+                                try:
+                                    reassign_feedback(rid,course_by_slug[chosen])
+                                    st.success("تم ربط التقييم بالدورة الصحيحة.")
+                                    st.rerun()
+                                except requests.RequestException as e:
+                                    st.error(f"تعذر ربط التقييم: {e}")
 
                     if cons:
                         if st.button(
