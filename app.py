@@ -280,19 +280,23 @@ def course_page():
     desc=html.escape(str(c.get("description") or ""))
     description_html=f'<p class="copy">{desc}</p>' if desc else ""
     B(f'<section class="ch"><div class="badge">{badge}</div><h1>{html.escape(name)}</h1><p class="copy">{subtitle}</p>{description_html}</section>')
-    if st.session_state.pop("feedback_saved_message",False):
+
+    saved=st.session_state.pop("feedback_saved_message",False)
+    if saved:
+        st.query_params["view"]="reviews"
         st.success("تم استلام تقييمك بنجاح.")
 
-    reviews_first=st.query_params.get("tab","")=="reviews"
-    labels=["آراء المتدربات","التقييم"] if reviews_first else ["التقييم","آراء المتدربات"]
-    tabs=st.tabs(labels)
-    for label,tab in zip(labels,tabs):
-        with tab:
-            st.markdown(f"### {label}")
-            if label=="آراء المتدربات":
-                show_reviews(str(c.get("slug") or ""))
-            else:
-                form(c)
+    view=st.query_params.get("view","reviews")
+
+    if view=="feedback":
+        B(f'<a class="back" href="?page=course&slug={html.escape(str(c.get("slug") or ""))}">← العودة إلى آراء المتدربات</a>')
+        st.markdown("### أضيفي تقييمك")
+        form(c)
+    else:
+        st.markdown("### آراء المتدربات")
+        B(f'<div style="margin:0 0 1.2rem"><a class="btn primary" style="width:100%;font-size:.95rem;padding:.82rem 1rem" href="?page=course&slug={html.escape(str(c.get("slug") or ""))}&view=feedback">أضيفي تقييمك</a></div>')
+        show_reviews(str(c.get("slug") or ""))
+
     foot()
 
 def tot():
