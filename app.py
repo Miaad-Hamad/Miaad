@@ -18,23 +18,29 @@ B("""<style>
 .notice{border:1px solid var(--l);background:#fafafa;border-radius:12px;padding:.9rem;color:var(--g);font-size:.83rem;line-height:1.8;margin-bottom:1rem}div[data-testid="stForm"]{border:1px solid var(--l);border-radius:18px;padding:1.1rem}.stTextInput input,.stTextArea textarea{border-radius:10px!important;border:1px solid var(--l)!important}.stButton>button,.stFormSubmitButton>button,.stDownloadButton>button{border-radius:10px!important;border:1px solid var(--p)!important;background:var(--p)!important;color:#fff!important;font-weight:700!important}div[role="radiogroup"]{direction:rtl}.foot{text-align:center;color:#999;font-size:.72rem;padding:2rem 0}
 @media(max-width:850px){.links{display:none}.art{min-height:250px}.hc{padding:2.2rem}.cards,.values-grid{grid-template-columns:repeat(2,1fr)}.fgrid{grid-template-columns:1fr}.socials{grid-template-columns:repeat(2,1fr)}.rgrid{grid-template-columns:1fr}.course{grid-template-columns:1fr}}@media(max-width:500px){.cards,.values-grid,.socials{grid-template-columns:1fr}}
 [data-testid="stWidgetLabel"] p{text-align:right!important;width:100%}[data-baseweb="radio"]{direction:rtl!important}.stCaption{direction:rtl!important;text-align:right!important}.stMarkdown h1,.stMarkdown h2,.stMarkdown h3{color:var(--p)!important;font-family:"IBM Plex Sans Arabic","Tahoma",sans-serif!important;font-weight:700!important}[data-testid="stHeader"]{background:transparent!important}</style>""".replace("__PINK__",PINK).replace("__SOFT__",SOFT).replace("__INK__",INK).replace("__GRAY__",GRAY).replace("__LINE__",LINE))
+
 def secret(path,default=""):
     try:
         v=st.secrets
         for k in path.split("."): v=v[k]
         return str(v)
     except: return default
+
 URL=secret("supabase.url").rstrip("/").removesuffix("/rest/v1")
 ANON=secret("supabase.anon_key")
 SERVICE=secret("supabase.service_role_key")
 ADMIN=secret("admin.password")
+
 def ready(): return bool(URL and ANON)
+
 def H(k,prefer=None):
     h={"apikey":k,"Authorization":f"Bearer {k}","Content-Type":"application/json"}
     if prefer:h["Prefer"]=prefer
     return h
+
 def insert(d):
     r=requests.post(f"{URL}/rest/v1/tot_feedback",headers=H(ANON,"return=minimal"),json=d,timeout=15);r.raise_for_status()
+
 def pubs(course_slug):
     if not ready():return []
     r=requests.get(
@@ -51,8 +57,10 @@ def pubs(course_slug):
     )
     r.raise_for_status()
     return r.json()
+
 def alls():
     r=requests.get(f"{URL}/rest/v1/tot_feedback",headers=H(SERVICE),params={"select":"*","order":"submitted_at.desc"},timeout=15);r.raise_for_status();return r.json()
+
 def courses():
     if not ready():return []
     r=requests.get(
@@ -83,6 +91,266 @@ def get_course(slug):
     r.raise_for_status()
     rows=r.json()
     return rows[0] if rows else None
+
+# =========================================================
+# نظام القياس والتقييم - الإضافة الوحيدة
+# =========================================================
+
+def get_assessment_form(course_id,form_type):
+    r=requests.get(
+        f"{URL}/rest/v1/assessment_forms",
+        headers=H(SERVICE),
+        params={
+            "select":"id,course_id,form_type,title,description,is_active",
+            "course_id":f"eq.{course_id}",
+            "form_type":f"eq.{form_type}",
+            "is_active":"eq.true",
+            "limit":"1"
+        },
+        timeout=15
+    )
+    r.raise_for_status()
+    rows=r.json()
+    return rows[0] if rows else None
+
+def get_assessment_questions(form_id):
+    r=requests.get(
+        f"{URL}/rest/v1/assessment_questions",
+        headers=H(SERVICE),
+        params={
+            "select":"id,form_id,question_text,question_type,axis,options,correct_answer,points,display_order,is_required",
+            "form_id":f"eq.{form_id}",
+            "order":"display_order.asc"
+        },
+        timeout=15
+    )
+    r.raise_for_status()
+    return r.json()
+
+def save_assessment_submission(course_id,form_id,participant_name,answers,questions):
+    score=0
+    max_score=sum(float(q.get("points") or 0) for q in questions)
+    answer_rows=[]
+    qmap={int(q["id"]):q for q in questions}
+
+    for qid,answer in answers.items():
+        q=qmap[int(qid)]
+        qtype=str(q.get("question_type") or "")
+        points=float(q.get("points") or 0)
+        is_correct=None
+        points_earned=0
+        numeric_value=None
+
+        if qtype=="multiple_choice":
+            is_correct=str(answer)==str(q.get("correct_answer"))
+            points_earned=points if is_correct else 0
+            score+=points_earned
+        elif qtype=="scale_5":
+            try:numeric_value=float(answer)
+            except:numeric_value=None
+        elif qtype=="yes_no" and q.get("correct_answer") is not None:
+            is_correct=str(answer)==str(q.get("correct_answer"))
+            points_earned=points if is_correct else 0
+            score+=points_earned
+
+        answer_rows.append({
+            "question_id":int(qid),
+            "answer_text":str(answer) if answer is not None else None,
+            "numeric_value":numeric_value,
+            "is_correct":is_correct,
+            "points_earned":points_earned
+        })
+
+    percentage=(score/max_score*100) if max_score>0 else None
+
+    payload={
+        "course_id":int(course_id),
+        "form_id":int(form_id),
+        "participant_name":participant_name.strip(),
+        "score":score if max_score>0 else None,
+        "max_score":max_score if max_score>0 else None,
+        "percentage":round(percentage,2) if percentage is not None else None
+    }
+
+    r=requests.post(
+        f"{URL}/rest/v1/assessment_submissions",
+        headers=H(SERVICE,"return=representation"),
+        json=payload,
+        timeout=15
+    )
+    r.raise_for_status()
+    rows=r.json()
+    if not rows:
+        raise RuntimeError("لم يتم إنشاء سجل القياس.")
+
+    submission_id=rows[0]["id"]
+    for row in answer_rows:
+        row["submission_id"]=submission_id
+
+    if answer_rows:
+        r=requests.post(
+            f"{URL}/rest/v1/assessment_answers",
+            headers=H(SERVICE,"return=minimal"),
+            json=answer_rows,
+            timeout=15
+        )
+        r.raise_for_status()
+
+    return {"submission_id":submission_id,"score":score,"max_score":max_score,"percentage":percentage}
+
+def assessment_links(course_data):
+    slug=html.escape(str(course_data.get("slug") or ""))
+    items=[
+        f'<div class="course"><div><h3>القياس القبلي</h3><p class="small">قياس مستوى المعرفة والمهارات قبل بدء البرنامج.</p></div><a class="btn primary" href="?page=assessment&slug={slug}&type=pre">فتح النموذج ←</a></div>',
+        f'<div class="course"><div><h3>القياس البعدي</h3><p class="small">قياس مستوى المعرفة والمهارات بعد إتمام البرنامج.</p></div><a class="btn primary" href="?page=assessment&slug={slug}&type=post">فتح النموذج ←</a></div>',
+        f'<div class="course"><div><h3>تقييم تجربة البرنامج</h3><p class="small">قياس رضا المتدربات عن محتوى البرنامج وتجربته التدريبية.</p></div><a class="btn primary" href="?page=assessment&slug={slug}&type=satisfaction">فتح النموذج ←</a></div>'
+    ]
+    st.markdown("### القياس والتقييم")
+    B(f'<div class="fgrid" style="grid-template-columns:1fr">{"".join(items)}</div>')
+
+def assessment_page():
+    slug=st.query_params.get("slug","")
+    form_type=st.query_params.get("type","")
+
+    nav()
+
+    if form_type not in ("pre","post","satisfaction"):
+        st.error("نوع النموذج غير صحيح.")
+        foot()
+        return
+
+    try:
+        c=get_course(slug) if slug else None
+    except requests.RequestException:
+        c=None
+
+    if not c:
+        st.error("تعذر العثور على الدورة.")
+        foot()
+        return
+
+    B(f'<a class="back" href="?page=course&slug={html.escape(str(slug))}">← العودة إلى الدورة</a>')
+
+    try:
+        af=get_assessment_form(int(c["id"]),form_type)
+    except requests.RequestException as e:
+        st.error("تعذر تحميل نموذج القياس.")
+        if e.response is not None: st.code(e.response.text)
+        foot()
+        return
+
+    if not af:
+        st.info("هذا النموذج غير متاح حاليًا.")
+        foot()
+        return
+
+    try:
+        questions=get_assessment_questions(int(af["id"]))
+    except requests.RequestException as e:
+        st.error("تعذر تحميل أسئلة النموذج.")
+        if e.response is not None: st.code(e.response.text)
+        foot()
+        return
+
+    B(
+        f'<section class="ch"><div class="badge">FLOURISH · القياس والتقييم</div>'
+        f'<h1>{html.escape(str(af.get("title") or "القياس والتقييم"))}</h1>'
+        f'<p class="copy">{html.escape(str(c.get("name_ar") or "برنامج تدريبي"))}</p></section>'
+    )
+
+    if af.get("description"):
+        B(f'<div class="notice">{html.escape(str(af.get("description")))}</div>')
+
+    if form_type=="satisfaction":
+        st.caption("1 = لا أوافق بشدة · 2 = لا أوافق · 3 = محايدة · 4 = أوافق · 5 = أوافق بشدة")
+    else:
+        st.caption("اختاري الإجابة الأدق لكل سؤال.")
+
+    if not questions:
+        st.info("لا توجد أسئلة في هذا النموذج حتى الآن.")
+        foot()
+        return
+
+    version_key=f"assessment_version_{af['id']}"
+    if version_key not in st.session_state:
+        st.session_state[version_key]=0
+    v=st.session_state[version_key]
+
+    with st.form(f"assessment_form_{af['id']}_{v}",clear_on_submit=False):
+        participant_name=st.text_input("الاسم الكامل *",max_chars=100,key=f"assess_name_{af['id']}_{v}")
+        answers={}
+        last_axis=None
+
+        for q in questions:
+            qid=int(q["id"])
+            qtext=str(q.get("question_text") or "")
+            qtype=str(q.get("question_type") or "")
+            axis=str(q.get("axis") or "")
+
+            if axis and axis!=last_axis:
+                st.markdown(f"#### {axis}")
+                last_axis=axis
+
+            key=f"assess_q_{qid}_{v}"
+
+            if qtype=="multiple_choice":
+                opts=q.get("options") or []
+                if not isinstance(opts,list): opts=[]
+                answers[qid]=st.radio(qtext,opts,index=None,key=key)
+            elif qtype=="scale_5":
+                answers[qid]=st.radio(qtext,["1","2","3","4","5"],horizontal=True,index=None,key=key)
+            elif qtype=="yes_no":
+                answers[qid]=st.radio(qtext,["نعم","لا"],horizontal=True,index=None,key=key)
+            else:
+                answers[qid]=st.text_area(qtext,max_chars=1000,key=key)
+
+        submitted=st.form_submit_button(
+            "إرسال تقييم التجربة" if form_type=="satisfaction" else "إرسال القياس",
+            use_container_width=True
+        )
+
+    if submitted:
+        if not participant_name or len(participant_name.strip())<2:
+            st.error("الاسم الكامل إلزامي.")
+        else:
+            missing=[]
+            for q in questions:
+                if not bool(q.get("is_required")): continue
+                value=answers.get(int(q["id"]))
+                if value is None or (isinstance(value,str) and not value.strip()):
+                    missing.append(q["id"])
+
+            if missing:
+                st.error("أكملي جميع الأسئلة المطلوبة قبل الإرسال.")
+            else:
+                clean_answers={
+                    qid:(value.strip() if isinstance(value,str) else value)
+                    for qid,value in answers.items()
+                    if value is not None and not (isinstance(value,str) and not value.strip())
+                }
+                try:
+                    save_assessment_submission(
+                        int(c["id"]),
+                        int(af["id"]),
+                        participant_name,
+                        clean_answers,
+                        questions
+                    )
+                    st.session_state[version_key]+=1
+                    st.session_state[f"assessment_saved_{af['id']}"]=True
+                    st.rerun()
+                except requests.RequestException as e:
+                    st.error("تعذر حفظ النموذج.")
+                    if e.response is not None: st.code(e.response.text)
+                except Exception as e:
+                    st.error(f"تعذر حفظ النموذج: {e}")
+
+    if st.session_state.pop(f"assessment_saved_{af['id']}",False):
+        st.success("تم استلام النموذج بنجاح. شكرًا لمشاركتك.")
+        B(f'<div style="margin-top:1rem"><a class="btn primary" href="?page=course&slug={html.escape(str(slug))}">العودة إلى صفحة الدورة ←</a></div>')
+
+    foot()
+
 def admin_courses():
     r=requests.get(
         f"{URL}/rest/v1/courses",
@@ -123,6 +391,7 @@ def delete_course(i):
 
 def approve(i,v):
     r=requests.patch(f"{URL}/rest/v1/tot_feedback",headers=H(SERVICE,"return=minimal"),params={"id":f"eq.{i}"},json={"approved_public":bool(v)},timeout=15);r.raise_for_status()
+
 def reassign_feedback(i,course_row):
     payload={
         "course_slug":str(course_row.get("slug") or ""),
@@ -137,13 +406,16 @@ def reassign_feedback(i,course_row):
         timeout=15
     )
     r.raise_for_status()
+
 def nav():
     B("""<div class="nav"><div class="brand">MIAAD ALANAZI</div><div class="links"><a href="?page=home">الرئيسية</a><a href="#about">عني</a><a href="?page=flourish">FLOURISH</a><a href="#contact">تواصل معي</a></div></div>""")
+
 def foot():B('<div class="foot">MIAAD ALANAZI · FLOURISH </div>')
+
 def home():
     nav()
     B("""<section class="hero"><div class="hc"><div class="hello">هنا، أشارك رحلةً تنمو بالمعرفة وتزدهر بالأثر</div><h1>ميعاد العنزي</h1><div class="roles">هندسة البرمجيات • الأمن السيبراني • التدريب والتطوير المهني</div><p class="copy"></p></div></section>""")
-    
+
     B("""<section class="sec" id="about"><div class="kick">نبذة عني</div><h2 class="title">أسعى لأن يكون لكل خطوة قيمة، ولكل تجربة أثر</h2><p class="copy">أرى مسيرتي المهنية رحلةً مستمرة من التعلّم والبناء والتطوير. أهتم بصناعة عملٍ مدروس يبدأ بفهم حقيقي، ويتشكل بوضوح، ويتطور بالتجربة والقياس. أبحث دائمًا عمّا يضيف قيمة، وأؤمن بأن أفضل النتائج هي التي لا تنتهي عند الإنجاز، بل تفتح مساحةً لما هو أفضل.</p><div class="values-grid"><div class="value-card"><div class="value-icon">✦</div><h3>الإتقان</h3><p>أن يستحق العمل أن يحمل اسمي.</p></div><div class="value-card"><div class="value-icon">◇</div><h3>التعلّم</h3><p>أن أبقى في مساحة نمو مستمر.</p></div><div class="value-card"><div class="value-icon">◎</div><h3>الأصالة</h3><p>أن يكون لما أقدمه هويته وقيمته.</p></div><div class="value-card"><div class="value-icon">↗</div><h3>الأثر</h3><p>أن يتجاوز الإنجاز لحظته ويترك قيمة.</p></div></div></section>""")
     B("""<section class="flourish-spotlight"><div class="fl-name">FLOURISH</div><div class="fl-tagline">التطوير المهني، بهوية واضحة</div><a class="fl-btn" href="?page=flourish">استكشف FLOURISH ←</a></section>""")
     B("""<section class="sec" id="contact"><div class="kick">تواصل معي</div><h2 class="title">حساباتي وقنوات التواصل</h2><div class="socials">
@@ -153,6 +425,7 @@ def home():
 <a class="social" href="https://wa.me/966508245176" target="_blank" rel="noopener"><span class="social-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.04 2a9.84 9.84 0 0 0-8.38 15.01L2 22l5.12-1.6A9.96 9.96 0 1 0 12.04 2Zm0 17.95a8.1 8.1 0 0 1-4.13-1.13l-.3-.18-3.04.95.98-2.96-.2-.31a7.92 7.92 0 1 1 6.69 3.63Zm4.44-5.93c-.24-.12-1.44-.71-1.66-.79-.22-.08-.38-.12-.54.12-.16.24-.62.79-.76.95-.14.16-.28.18-.52.06-.24-.12-1.03-.38-1.96-1.21-.72-.64-1.21-1.44-1.35-1.68-.14-.24-.01-.37.11-.49.11-.11.24-.28.36-.42.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.54-1.3-.74-1.78-.19-.47-.39-.41-.54-.42h-.46c-.16 0-.42.06-.64.3-.22.24-.84.82-.84 2s.86 2.32.98 2.48c.12.16 1.7 2.6 4.12 3.64.58.25 1.03.4 1.38.51.58.18 1.1.16 1.52.1.46-.07 1.44-.59 1.64-1.16.2-.57.2-1.05.14-1.16-.06-.1-.22-.16-.46-.28Z"/></svg></span><b>WhatsApp</b><small>0508245176</small></a>
 <a class="social" href="mailto:Miaad.alhamad@gmail.com"><span class="social-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"/></svg></span><b>Email</b><small>Miaad.alhamad@gmail.com</small></a>
 </div></section>""");foot()
+
 def flourish():
     nav();B('<a class="back" href="?page=home">← العودة إلى الموقع</a>')
     B("""<section class="ch"><div class="badge">FLOURISH</div><h1>البرامج والتقييمات</h1><p class="copy">مساحة تجمع البرامج التدريبية المقدمة ضمن FLOURISH والتقييمات المرتبطة بها.</p></section>""")
@@ -293,6 +566,9 @@ def course_page():
         st.markdown("### أضيفي تقييمك")
         form(c)
     else:
+        # الإضافة فقط: النماذج الثلاثة أعلى آراء المتدربات
+        assessment_links(c)
+
         st.markdown("### آراء المتدربات")
         B(f'<div style="margin:0 0 1.2rem"><a class="btn primary" style="width:100%;font-size:.95rem;padding:.82rem 1rem" href="?page=course&slug={html.escape(str(c.get("slug") or ""))}&view=feedback">أضيفي تقييمك</a></div>')
         show_reviews(str(c.get("slug") or ""))
@@ -303,9 +579,11 @@ def tot():
     st.query_params["page"]="course"
     st.query_params["slug"]="tot-2026-08-16"
     st.rerun()
+
 def csvdata(rows):
     if not rows:return b""
     fields=["id","name","course","course_slug","course_date","content_quality","clarity","practical_value","activities","trainer_delivery","interaction","answers","organization","environment","materials","overall","recommend","best_part","improvement","additional_notes","consent_public","approved_public","submitted_at"];b=io.StringIO();w=csv.DictWriter(b,fieldnames=fields,extrasaction="ignore");w.writeheader();[w.writerow(r) for r in rows];return b.getvalue().encode("utf-8-sig")
+
 def admin():
     nav();B('<section class="ch"><div class="badge">PRIVATE</div><h1>لوحة الإدارة</h1><p class="copy">إدارة الدورات والتقييمات من مكان واحد.</p></section>')
     if not ADMIN or not SERVICE:
@@ -604,6 +882,7 @@ def admin():
                     else:
                         st.caption("لم توافق المتدربة على النشر.")
     foot()
+
 page=st.query_params.get("page","home")
-selected_page = {"flourish":flourish,"course":course_page,"tot":tot,"admin":admin}.get(page,home)
+selected_page = {"flourish":flourish,"course":course_page,"assessment":assessment_page,"tot":tot,"admin":admin}.get(page,home)
 selected_page()
